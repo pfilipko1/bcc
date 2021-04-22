@@ -1,12 +1,24 @@
+# Copyright (c) Granulate. All rights reserved.
 # Copyright (c) Facebook, Inc.
-# Licensed under the Apache License, Version 2.0 (the "License")
-
+#
+# This file has been modified from its original version by Granulate.
+# Modifications are licensed under the AGPL3 License. See LICENSE.txt for license information.
+#
 include_directories(${CMAKE_SOURCE_DIR}/src/cc)
 include_directories(${CMAKE_SOURCE_DIR}/src/cc/api)
 include_directories(${CMAKE_SOURCE_DIR}/src/cc/libbpf/include/uapi)
 
-add_executable(PyPerf PyPerf.cc PyPerfUtil.cc PyPerfBPFProgram.cc PyPerfLoggingHelper.cc PyPerfDefaultPrinter.cc Py36Offsets.cc)
-target_link_libraries(PyPerf bcc-static)
+add_executable(PyPerf
+        PyPerf.cc
+        PyPerfProfiler.cc
+        PyPerfBPFProgram.cc
+        PyPerfLoggingHelper.cc
+        PyPerfCollapsedPrinter.cc
+        PyPerfVersion.cc
+        PyPerfProc.cc
+        PyOffsets.cc
+        )
+target_link_libraries(PyPerf pthread)
 if(NOT CMAKE_USE_LIBBPF_PACKAGE)
   target_link_libraries(PyPerf bcc-static)
 else()

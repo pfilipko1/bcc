@@ -5,24 +5,20 @@
  * This file has been modified from its original version by Granulate.
  * Modifications are licensed under the AGPL3 License. See LICENSE.txt for license information.
  */
-
 #pragma once
 
 #include <vector>
-
-#include "PyPerfType.h"
+#include <string>
+#include <sys/types.h>
 
 namespace ebpf {
 namespace pyperf {
 
-class PyPerfProfiler;
+bool filter_kernel_thread(int pid);
 
-class PyPerfSampleProcessor {
- public:
-  virtual void prepare() {};
-  virtual void processSamples(const std::vector<PyPerfSample>& samples,
-                              PyPerfProfiler* util) = 0;
-};
+bool getRunningPids(std::vector<int>& output);
+
+bool get_pid_path(pid_t pid, std::string& path, std::string& out_path);
 
 }  // namespace pyperf
 }  // namespace ebpf
