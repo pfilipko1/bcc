@@ -100,7 +100,7 @@ if(ENABLE_USDT)
 endif()
 
 add_library(bcc-loader-static STATIC ${bcc_sym_sources} ${bcc_util_sources})
-target_link_libraries(bcc-loader-static elf z)
+target_link_libraries(bcc-loader-static libelf.a z)
 add_library(bcc-static STATIC
   ${bcc_common_sources} ${bcc_table_sources} ${bcc_util_sources} ${bcc_usdt_sources} ${bcc_sym_sources} ${bcc_util_sources})
 set_target_properties(bcc-static PROPERTIES OUTPUT_NAME bcc)
@@ -114,12 +114,11 @@ set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${llvm_lib_exclude_f
 # bcc_common_libs_for_a for archive libraries
 # bcc_common_libs_for_s for shared libraries
 set(bcc_common_libs b_frontend clang_frontend
-  -Wl,--whole-archive ${clang_libs} ${llvm_libs} -Wl,--no-whole-archive
-  ${LIBELF_LIBRARIES})
-set(bcc_common_libs_for_a ${bcc_common_libs})
-set(bcc_common_libs_for_s ${bcc_common_libs})
+  -Wl,--whole-archive ${clang_libs} ${llvm_libs} -Wl,--no-whole-archive)
+set(bcc_common_libs_for_a ${bcc_common_libs} libelf.a)
+set(bcc_common_libs_for_s ${bcc_common_libs} elf)
 set(bcc_common_libs_for_lua b_frontend clang_frontend
-  ${clang_libs} ${llvm_libs} ${LIBELF_LIBRARIES})
+  ${clang_libs} ${llvm_libs} elf)
 if(LIBBPF_FOUND)
   list(APPEND bcc_common_libs_for_a ${LIBBPF_LIBRARIES})
   list(APPEND bcc_common_libs_for_s ${LIBBPF_LIBRARIES})
@@ -148,7 +147,7 @@ endif()
 add_subdirectory(frontends)
 
 # Link against LLVM libraries
-target_link_libraries(bcc-shared ${bcc_common_libs_for_s})
+target_link_libraries(bcc-shared PRIVATE ${bcc_common_libs_for_s})
 target_link_libraries(bcc-static ${bcc_common_libs_for_a} bcc-loader-static)
 set(bcc-lua-static ${bcc-lua-static} ${bcc_common_libs_for_lua})
 

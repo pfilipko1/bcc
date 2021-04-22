@@ -7,22 +7,53 @@
  * USAGE: PyPerf [-d|--duration DURATION_MS] [-c|--sample-rate SAMPLE_RATE]
  *               [-v|--verbosity LOG_VERBOSITY]
  *
+ * Copyright (c) Granulate. All rights reserved.
  * Copyright (c) Facebook, Inc.
- * Licensed under the Apache License, Version 2.0 (the "License")
+ *
+ * This file has been modified from its original version by Granulate.
+ * Modifications are licensed under the AGPL3 License. See LICENSE.txt for license information.
  */
 
 #include <cinttypes>
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <chrono>
+#include <csignal>
 
-#include "PyPerfDefaultPrinter.h"
+#include "PyPerfCollapsedPrinter.h"
 #include "PyPerfLoggingHelper.h"
-#include "PyPerfUtil.h"
+#include "PyPerfProfiler.h"
+
+namespace {
+
+ebpf::pyperf::PyPerfProfiler *g_profiler;
+
+void on_dump_signal(int sig) {
+  g_profiler->on_dump_signal();
+}
+
+}
 
 int main(int argc, char** argv) {
   // Argument parsing helpers
   int pos = 1;
+
+  auto parseStrArg = [&](std::vector<std::string> argNames, std::string& target) {
+    std::string arg(argv[pos]);
+    for (const auto& name : argNames) {
+      if (arg == name) {
+        if (pos == argc) {
+          std::fprintf(stderr, "Expect value after %s\n", arg.c_str());
+          std::exit(1);
+        }
+        pos++;
+        target = argv[pos];
+        return true;
+      }
+    }
+    return false;
+  };
 
   auto parseIntArg = [&](std::vector<std::string> argNames, uint64_t& target) {
     std::string arg(argv[pos]);
@@ -47,41 +78,36 @@ int main(int argc, char** argv) {
     return false;
   };
 
-  auto parseBoolArg = [&](std::vector<std::string> argNames, bool& target) {
-    std::string arg(argv[pos]);
-    for (const auto& name : argNames) {
-      if (arg == ("--" + name)) {
-        target = true;
-        return true;
-      }
-      if (arg == "--no-" + name) {
-        target = false;
-        return true;
-      }
+  auto parseIntListArg = [&](std::vector<std::string> argNames, std::vector<uint64_t>& target) {
+    uint64_t value;
+    if (parseIntArg(argNames, value)) {
+      target.push_back(value);
+      return true;
     }
     return false;
   };
 
   // Default argument values
-  uint64_t sampleRate = 1000000;
-  uint64_t durationMs = 1000;
+  std::vector<uint64_t> pids;
+  uint64_t updateIntervalSecs = 10;
+  uint64_t sampleRate = 0;
+  uint64_t sampleFreq = 0;
+  uint64_t duration = 0;
   uint64_t verbosityLevel = 0;
-  bool showGILState = true;
-  bool showThreadState = true;
-  bool showPthreadIDState = false;
+  std::string output = "";
 
   while (true) {
     if (pos >= argc) {
       break;
     }
     bool found = false;
+    found = found || parseIntListArg({"-p", "--pid"}, pids);
     found = found || parseIntArg({"-c", "--sample-rate"}, sampleRate);
-    found = found || parseIntArg({"-d", "--duration"}, durationMs);
+    found = found || parseIntArg({"-F", "--frequency"}, sampleFreq);
+    found = found || parseIntArg({"-d", "--duration"}, duration);
+    found = found || parseIntArg({"--update-interval"}, updateIntervalSecs);
     found = found || parseIntArg({"-v", "--verbose"}, verbosityLevel);
-    found = found || parseBoolArg({"show-gil-state"}, showGILState);
-    found = found || parseBoolArg({"show-thread-state"}, showThreadState);
-    found =
-        found || parseBoolArg({"show-pthread-id-state"}, showPthreadIDState);
+    found = found || parseStrArg({"-o", "--output"}, output);
     if (!found) {
       std::fprintf(stderr, "Unexpected argument: %s\n", argv[pos]);
       std::exit(1);
@@ -90,19 +116,51 @@ int main(int argc, char** argv) {
   }
 
   ebpf::pyperf::setVerbosity(verbosityLevel);
-  ebpf::pyperf::logInfo(1, "Profiling Sample Rate: %" PRIu64 "\n", sampleRate);
-  ebpf::pyperf::logInfo(1, "Profiling Duration: %" PRIu64 "ms\n", durationMs);
-  ebpf::pyperf::logInfo(1, "Showing GIL state: %d\n", showGILState);
-  ebpf::pyperf::logInfo(1, "Showing Thread state: %d\n", showThreadState);
-  ebpf::pyperf::logInfo(1, "Showing Pthread ID state: %d\n",
-                        showPthreadIDState);
 
-  ebpf::pyperf::PyPerfUtil util;
-  util.init();
+  if (sampleFreq == 0 && sampleRate == 0) {
+    sampleRate = 1000000;
+  }
+  else if (sampleFreq != 0 && sampleRate != 0) {
+    std::fprintf(stderr, "Only one of sample rate/frequency must be given!\n");
+    return 1;
+  }
 
-  ebpf::pyperf::PyPerfDefaultPrinter printer(showGILState, showThreadState,
-                                             showPthreadIDState);
-  util.profile(sampleRate, durationMs, &printer);
+  if (sampleRate != 0) {
+    ebpf::pyperf::logInfo(1, "Profiling Sample Rate: %" PRIu64 "\n",
+                          sampleRate);
+  }
+  if (sampleFreq != 0) {
+    ebpf::pyperf::logInfo(1, "Profiling Sample Frequency: %" PRIu64 "\n",
+                          sampleFreq);
+  }
+  if (duration != 0) {
+    ebpf::pyperf::logInfo(1, "Profiling Duration: %" PRIu64 "s\n", duration);
+  }
+
+  try {
+    ebpf::pyperf::PyPerfProfiler profiler;
+    profiler.update_interval = std::chrono::seconds{updateIntervalSecs};
+
+    auto res = profiler.init();
+    if (res != ebpf::pyperf::PyPerfProfiler::PyPerfResult::SUCCESS) {
+      std::exit((int)res);
+    }
+
+    for (auto pid : pids) {
+      profiler.pids.push_back(pid);
+    }
+
+    g_profiler = &profiler;
+    signal(SIGUSR2, on_dump_signal);
+    std::fprintf(stderr, "Ready to profile\n");
+
+    ebpf::pyperf::PyPerfCollapsedPrinter printer{output};
+    profiler.profile(sampleRate, sampleFreq, duration, &printer);
+  }
+  catch (const std::exception& e) {
+    std::fprintf(stderr, "Profiler error: %s\n", e.what());
+    std::exit(1);
+  }
 
   return 0;
 }
