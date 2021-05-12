@@ -153,9 +153,10 @@ struct event {
   char comm[TASK_COMM_LEN];
   uint8_t error_code;
   uint8_t stack_status;
+  int32_t kernel_stack_id;
   // instead of storing symbol name here directly, we add it to another
   // hashmap with Symbols and only store the ids here
-  uint64_t stack_len;
+  int32_t stack_len;
   int32_t stack[STACK_MAX_LEN];
 };
 
@@ -185,6 +186,8 @@ BPF_PROG_ARRAY(progs, 2);
 
 BPF_PERCPU_ARRAY(state_heap, struct sample_state, 1);
 BPF_PERF_OUTPUT(events);
+
+BPF_STACK_TRACE(kernel_stacks, __KERNEL_STACKS_SIZE__);
 
 /**
 Get the thread id for a task just as Python would. Currently assumes Python uses pthreads.
@@ -595,6 +598,7 @@ no_code:
   goto submit;
 
 complete:
+  event->kernel_stack_id = kernel_stacks.get_stackid(ctx, BPF_F_REUSE_STACKID);
   event->error_code = ERROR_NONE;
   event->stack_status = STACK_STATUS_COMPLETE;
 submit:

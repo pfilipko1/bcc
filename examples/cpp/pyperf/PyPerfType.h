@@ -205,9 +205,10 @@ typedef struct event {
   char comm[TASK_COMM_LEN];
   uint8_t error_code;
   uint8_t stack_status;
+  int32_t kernel_stack_id;
   // instead of storing symbol name here directly, we add it to another
   // hashmap with Symbols and only store the ids here
-  int64_t stack_len;
+  int32_t stack_len;
   int32_t stack[STACK_MAX_LEN];
 } Event;
 
@@ -217,6 +218,7 @@ struct PyPerfSample {
   std::string comm;
   uint8_t errorCode;
   uint8_t stackStatus;
+  int32_t kernelStackId;
   std::vector<int32_t> pyStackIds;
 
   explicit PyPerfSample(const Event* raw, int rawSize)
@@ -225,6 +227,7 @@ struct PyPerfSample {
         comm(raw->comm),
         errorCode(raw->error_code),
         stackStatus(raw->stack_status),
+        kernelStackId(raw->kernel_stack_id),
         pyStackIds(raw->stack, raw->stack + raw->stack_len) {}
 };
 
