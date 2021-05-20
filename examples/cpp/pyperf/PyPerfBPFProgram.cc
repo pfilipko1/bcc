@@ -289,6 +289,12 @@ on_event(struct pt_regs* ctx) {
   event->tid = (pid_t)pid_tgid;
   bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
+  // Initialize stack info
+  event->kernel_stack_id = kernel_stacks.get_stackid(ctx, BPF_F_REUSE_STACKID);
+  event->stack_len = 0;
+  event->stack_status = STACK_STATUS_ERROR;
+  event->error_code = ERROR_NONE;
+
   if (pid_data->interp == 0) {
     // This is the first time we sample this process (or the GIL is still released).
     // Let's find PyInterpreterState:
@@ -351,6 +357,7 @@ on_event(struct pt_regs* ctx) {
   event->error_code = ERROR_THREAD_STATE_NOT_FOUND;
   state->get_thread_state_call_count = 0;
   progs.call(ctx, GET_THREAD_STATE_PROG_IDX);
+  // <unreachable>
 
 submit:
   events.perf_submit(ctx, &state->event, sizeof(struct event));
@@ -410,10 +417,6 @@ found:
 
   // Reset the error code
   event->error_code = ERROR_NONE;
-
-  // Initialize stack info in case any subprogram below fails
-  event->stack_status = STACK_STATUS_ERROR;
-  event->stack_len = 0;
 
   // We are going to need this later
   state->cur_cpu = bpf_get_smp_processor_id();
@@ -598,7 +601,6 @@ no_code:
   goto submit;
 
 complete:
-  event->kernel_stack_id = kernel_stacks.get_stackid(ctx, BPF_F_REUSE_STACKID);
   event->error_code = ERROR_NONE;
   event->stack_status = STACK_STATUS_COMPLETE;
 submit:
