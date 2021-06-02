@@ -17,15 +17,17 @@ extern const std::string PYPERF_BPF_PROGRAM = R"(
 #include <linux/sched.h>
 #include <uapi/linux/ptrace.h>
 
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
 #define BAD_THREAD_ID (~0)
 
 // Maximum threads: 32x8 = 256
 #define THREAD_STATES_PER_PROG 32
 #define THREAD_STATES_PROG_CNT 8
 
-// Maximum Python stack frames: 20x4 = 80
-#define PYTHON_STACK_FRAMES_PER_PROG 20
-#define PYTHON_STACK_PROG_CNT 4
+// Maximum Python stack frames: 16x5 = 80
+#define PYTHON_STACK_FRAMES_PER_PROG 16
+#define PYTHON_STACK_PROG_CNT 5
 #define STACK_MAX_LEN (PYTHON_STACK_FRAMES_PER_PROG * PYTHON_STACK_PROG_CNT)
 
 #define CLASS_NAME_LEN 32
@@ -474,14 +476,24 @@ get_first_arg_name(
   char *argname,
   size_t maxlen) {
   int result = 0;
+  ssize_t ob_size; // Py_ssize_t;
   // Roughly equivalnt to the following in GDB:
   //
   //   ((PyTupleObject*)$frame->f_code->co_varnames)->ob_item[0]
   //
   void* args_ptr;
   result |= bpf_probe_read_user(&args_ptr, sizeof(void*), code_ptr + offsets->PyCodeObject.co_varnames);
-  result |= bpf_probe_read_user(&args_ptr, sizeof(void*), args_ptr + offsets->PyTupleObject.ob_item);
-  result |= bpf_probe_read_user_str(argname, maxlen, args_ptr + offsets->String.data);
+  result |= bpf_probe_read_user(&ob_size, sizeof(ob_size), args_ptr + offsets->String.size); // String.size is PyVarObject.ob_size
+  if (result == 0 && ob_size > 0) {
+    result |= bpf_probe_read_user(&args_ptr, sizeof(void*), args_ptr + offsets->PyTupleObject.ob_item);
+    result |= bpf_probe_read_user_str(argname, maxlen, args_ptr + offsets->String.data);
+  } else {
+    // if we're not reading into it - clean it up to please the verifier.
+    #pragma unroll
+    for (size_t i = 0; i < maxlen; i++) {
+      argname[i] = '\0';
+    }
+  }
   return result;
 }
 
@@ -500,7 +512,7 @@ get_classname(
   // the first argument. If it's 'self', we get the type and it's name, if it's
   // 'cls', we just get the name. This is not perfect but there is no better way
   // to figure this out from the code object.
-  char argname[5]; // sizeof('self') + 1
+  char argname[MAX(sizeof("self"), sizeof("cls"))];
   result |= get_first_arg_name(code_ptr, offsets, argname, sizeof(argname));
 
   // compare strings as ints to save instructions
@@ -597,14 +609,6 @@ int read_python_stack(struct pt_regs* ctx) {
   void *cur_frame;
   void *cur_code_ptr;
 
-  // The following case should be unreachable. The test serves as a mandatory hint to the verifier
-  // regarding the range of `stack_len` when it's used as an offset below.
-  if (event->stack_len > STACK_MAX_LEN - PYTHON_STACK_FRAMES_PER_PROG) {
-    event->error_code = ERROR_CALL_FAILED;
-    goto submit;
-  }
-
-  int32_t *prog_stack = event->stack + event->stack_len;
 #pragma unroll
   for (int i = 0; i < PYTHON_STACK_FRAMES_PER_PROG; i++) {
     cur_frame = state->frame_ptr;
@@ -618,8 +622,11 @@ int read_python_stack(struct pt_regs* ctx) {
     // The compiler substitutes a constant for `i` because the loop is unrolled. This guarantees we
     // are always within the array bounds. On the other hand, `stack_len` is a variable, so the
     // verifier can't guarantee it's within bounds without an explicit check.
-    prog_stack[i] = read_symbol(state, cur_frame, cur_code_ptr);
-    event->stack_len++;
+    const int32_t symbol_id = read_symbol(state, cur_frame, cur_code_ptr);
+    // to please the verifier...
+    if (event->stack_len < STACK_MAX_LEN) {
+      event->stack[event->stack_len++] = symbol_id;
+    }
 
     // read next PyFrameObject pointer, update in place
     bpf_probe_read_user(
