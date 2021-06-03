@@ -213,7 +213,7 @@ typedef struct event {
   // hashmap with Symbols and only store the ids here
   int32_t stack_len;
   int32_t stack[STACK_MAX_LEN];
-#define FRAME_CODE_IS_NULL 0x80000001
+#define FRAME_CODE_IS_NULL ((int32_t)0x80000001)
 } Event;
 
 struct PyPerfSample {
