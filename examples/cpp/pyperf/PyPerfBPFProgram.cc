@@ -466,6 +466,9 @@ clear_symbol(const struct sample_state *state, struct symbol *sym) {
   // That API was introduced in kernel ver. 4.15+, so the alternative is to
   // copy a constant buffer from somewhere.
   bpf_probe_read_user(sym, sizeof(*sym), (void *)state->constant_buffer_addr);
+
+  // classname is not always read, so it must be cleared explicitly
+  sym->classname[0] = '\0';
 }
 
 /**
@@ -489,6 +492,10 @@ get_first_arg_name(
   if (result == 0 && ob_size > 0) {
     result |= bpf_probe_read_user(&args_ptr, sizeof(void*), args_ptr + offsets->PyTupleObject.ob_item);
     result |= bpf_probe_read_user_str(argname, maxlen, args_ptr + offsets->String.data);
+    if (result < 0) {
+      return result;
+    }
+    result = 0;
   } else {
     // if we're not reading into it - clean it up to please the verifier.
     #pragma unroll
@@ -522,23 +529,26 @@ get_classname(
   static char cls_str[4] = {'c', 'l', 's', '\0'};
   bool first_self = *(int32_t*)argname == *(int32_t*)self_str && argname[4] == '\0';
   bool first_cls = *(int32_t*)argname == *(int32_t*)cls_str;
+  if (!first_self && !first_cls) {
+    return result;
+  }
 
   // Read class name from $frame->f_localsplus[0]->ob_type->tp_name.
-  if (first_self || first_cls) {
-    void* tmp;
-    // read f_localsplus[0]:
-    result |= bpf_probe_read_user(&tmp, sizeof(void*), cur_frame + offsets->PyFrameObject.f_localsplus);
-    if (first_self) {
-      // we are working with an instance, first we need to get type
-      result |= bpf_probe_read_user(&tmp, sizeof(void*), tmp + offsets->PyObject.ob_type);
-    }
-    result |= bpf_probe_read_user(&tmp, sizeof(void*), tmp + offsets->PyTypeObject.tp_name);
-    result |= bpf_probe_read_user_str(&symbol->classname, sizeof(symbol->classname), tmp);
+  void* tmp;
+  // read f_localsplus[0]:
+  result |= bpf_probe_read_user(&tmp, sizeof(void*), cur_frame + offsets->PyFrameObject.f_localsplus);
+  if (tmp == NULL) {
+    // self/cls is a cellvar, deleted, or not an argument. tough luck :/
+    return result;
   }
-  else {
-    symbol->classname[0] = '\0';
+
+  if (first_self) {
+    // we are working with an instance, first we need to get type
+    result |= bpf_probe_read_user(&tmp, sizeof(void*), tmp + offsets->PyObject.ob_type);
   }
-  return result;
+  result |= bpf_probe_read_user(&tmp, sizeof(void*), tmp + offsets->PyTypeObject.tp_name);
+  result |= bpf_probe_read_user_str(&symbol->classname, sizeof(symbol->classname), tmp);
+  return (result < 0) ? result : 0;
 }
 
 static __always_inline int
@@ -556,10 +566,14 @@ read_symbol_names(
   // read PyCodeObject's filename into symbol
   result |= bpf_probe_read_user(&pystr_ptr, sizeof(void*), code_ptr + offsets->PyCodeObject.co_filename);
   result |= bpf_probe_read_user_str(&symbol->file, sizeof(symbol->file), pystr_ptr + offsets->String.data);
+  if (result < 0) {
+    return result;
+  }
+  result = 0;
   // read PyCodeObject's name into symbol
   result |= bpf_probe_read_user(&pystr_ptr, sizeof(void*), code_ptr + offsets->PyCodeObject.co_name);
   result |= bpf_probe_read_user_str(&symbol->name, sizeof(symbol->name), pystr_ptr + offsets->String.data);
-  return result;
+  return (result < 0) ? result : 0;
 }
 
 /**
