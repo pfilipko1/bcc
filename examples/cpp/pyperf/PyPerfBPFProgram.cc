@@ -12,11 +12,6 @@ namespace ebpf {
 namespace pyperf {
 
 extern const std::string PYPERF_BPF_PROGRAM = R"(
-#include <linux/compiler.h>
-#include <linux/version.h>
-#include <linux/sched.h>
-#include <uapi/linux/ptrace.h>
-
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
 #define BAD_THREAD_ID (~0)
@@ -221,20 +216,11 @@ get_task_thread_id(struct task_struct const *task, enum pthreads_impl pthreads_i
   // For musl, see definition of `__pthread_self`.
 
 #ifdef __x86_64__
-// thread_struct->fs was renamed to fsbase in
-// https://github.com/torvalds/linux/commit/296f781a4b7801ad9c1c0219f9e87b6c25e196fe
-// so depending on kernel version, we need to account for that
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
-#define THREAD_FSBASE(task) (task->thread.fs)
-#else
-#define THREAD_FSBASE(task) (task->thread.fsbase)
-#endif
-
   int ret;
   uint64_t fsbase;
   // HACK: Usually BCC would translate a deref of the field into `read_kernel` for us, but it
   //       doesn't detect it due to the macro (because it transforms before preprocessing).
-  bpf_probe_read_kernel(&fsbase, sizeof(fsbase), &THREAD_FSBASE(task));
+  bpf_probe_read_kernel(&fsbase, sizeof(fsbase), (u8*)task + FS_OFS);
 
   switch (pthreads_impl) {
   case PTI_GLIBC:
@@ -336,7 +322,7 @@ on_event(struct pt_regs* ctx) {
       // work properly on bcc, so we need to re-implement.
       bpf_probe_read_kernel(
           &user_regs, sizeof(user_regs),
-          (struct pt_regs *)((unsigned long)(task->stack) + THREAD_SIZE -
+          (struct pt_regs *)(*(unsigned long*)((unsigned long)task + STACK_OFS) + THREAD_SIZE -
                             TOP_OF_KERNEL_STACK_PADDING) - 1);
     }
 

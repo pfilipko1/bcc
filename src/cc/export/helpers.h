@@ -47,16 +47,6 @@ R"********(
 #define CC_USING_FENTRY
 #endif
 
-#include <uapi/linux/bpf.h>
-#include <uapi/linux/if_packet.h>
-#include <linux/version.h>
-#include <linux/log2.h>
-#include <asm/page.h>
-
-#ifndef CONFIG_BPF_SYSCALL
-#error "CONFIG_BPF_SYSCALL is undefined, please check your .config or ask your Linux distro to enable this feature"
-#endif
-
 #ifdef PERF_MAX_STACK_DEPTH
 #define BPF_MAX_STACK_DEPTH PERF_MAX_STACK_DEPTH
 #else
@@ -172,17 +162,6 @@ BPF_TABLE(_table_type, _key_type, _leaf_type, _name, _max_entries); \
 __attribute__((section("maps/shared"))) \
 struct _name##_table_t __##_name
 
-// Identifier for current CPU used in perf_submit and perf_read
-// Prefer BPF_F_CURRENT_CPU flag, falls back to call helper for older kernel
-// Can be overridden from BCC
-#ifndef CUR_CPU_IDENTIFIER
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0)
-#define CUR_CPU_IDENTIFIER BPF_F_CURRENT_CPU
-#else
-#define CUR_CPU_IDENTIFIER bpf_get_smp_processor_id()
-#endif
-#endif
-
 // Table for pushing custom events to userspace via perf ring buffer
 #define BPF_PERF_OUTPUT(_name) \
 struct _name##_table_t { \
@@ -195,6 +174,11 @@ struct _name##_table_t { \
 }; \
 __attribute__((section("maps/perf_output"))) \
 struct _name##_table_t _name = { .max_entries = 0 }
+
+// Identifier for current CPU used in perf_submit and perf_read
+// We always use BPF_F_CURRENT_CPU in PyPerf because that's available since 4.8 and PyPerf
+// requires higher kernel version anyway.
+#define CUR_CPU_IDENTIFIER BPF_F_CURRENT_CPU
 
 // Table for pushing custom events to userspace via ring buffer
 #define BPF_RINGBUF_OUTPUT(_name, _num_pages) \
@@ -439,12 +423,6 @@ BPF_ANNOTATE_KV_PAIR(_name, struct bpf_cgroup_storage_key, _leaf_type)
 // packet parsing state machine helpers
 #define cursor_advance(_cursor, _len) \
   ({ void *_tmp = _cursor; _cursor += _len; _tmp; })
-
-#ifdef LINUX_VERSION_CODE_OVERRIDE
-unsigned _version BCC_SEC("version") = LINUX_VERSION_CODE_OVERRIDE;
-#else
-unsigned _version BCC_SEC("version") = LINUX_VERSION_CODE;
-#endif
 
 /* helper functions called from eBPF programs written in C */
 static void *(*bpf_map_lookup_elem)(void *map, void *key) =
