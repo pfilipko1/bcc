@@ -53,7 +53,8 @@ typedef int bool;
 #define ENOSPC 28
 #define PAGE_SIZE 4096
 #define PAGE_MASK (~(PAGE_SIZE-1))
-#define THREAD_SIZE 8192
+#define THREAD_SIZE_ORDER 2
+#define THREAD_SIZE (PAGE_SIZE << THREAD_SIZE_ORDER)
 
 struct pt_regs {
 /*
