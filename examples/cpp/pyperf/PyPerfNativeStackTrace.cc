@@ -69,7 +69,7 @@ NativeStackTrace::NativeStackTrace(uint32_t pid, const unsigned char *raw_stack,
     unw_word_t offset;
     char sym[256];
     char   *realname;
-
+    int     status;
     // TODO: This function is very heavy. We should try to do some caching here, maybe in the
     //       underlying UPT function.
     res = unw_get_proc_name(&cursor, sym, sizeof(sym), &offset);
