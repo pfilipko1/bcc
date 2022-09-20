@@ -74,7 +74,7 @@ NativeStackTrace::NativeStackTrace(uint32_t pid, const unsigned char *raw_stack,
     //       underlying UPT function.
     res = unw_get_proc_name(&cursor, sym, sizeof(sym), &offset);
     if (res == 0) {
-      realname = abi::__cxa_demangle(std::string(sym), 0, 0, &status);
+      realname = abi::__cxa_demangle(sym, 0, 0, &status);
       this->symbols.push_back(std::string(realname));
       free(realname);
     } else {
