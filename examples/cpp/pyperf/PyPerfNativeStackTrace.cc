@@ -75,8 +75,12 @@ NativeStackTrace::NativeStackTrace(uint32_t pid, const unsigned char *raw_stack,
     //       underlying UPT function.
     res = unw_get_proc_name(&cursor, sym, sizeof(sym), &offset);
     if (res == 0) {
-      realname = abi::__cxa_demangle(sym, 0, 0, &status);
-      this->symbols.push_back(std::string(realname));
+      realname = abi::__cxa_demangle(sym, NULL, NULL, &status);
+      if(status == 0){
+        this->symbols.push_back(std::string(realname));
+      } else {
+        this->symbols.push_back(std::string(sym));
+      }
       free(realname);
     } else {
       unw_word_t ip;
