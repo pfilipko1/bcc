@@ -8,11 +8,11 @@
 #include <sys/uio.h>
 #include <errno.h>
 #include <unistd.h>
+#include <cxxabi.h>
 
 #include <cstdio>
 #include <cstring>
 #include <sstream>
-#include <cxxabi.h>
 
 #include "PyPerfLoggingHelper.h"
 
@@ -69,13 +69,18 @@ NativeStackTrace::NativeStackTrace(uint32_t pid, const unsigned char *raw_stack,
     unw_word_t offset;
     char sym[256];
     char   *realname;
+    int     status;
 
     // TODO: This function is very heavy. We should try to do some caching here, maybe in the
     //       underlying UPT function.
     res = unw_get_proc_name(&cursor, sym, sizeof(sym), &offset);
     if (res == 0) {
-      realname = abi::__cxa_demangle(sym, 0, 0, &status);
-      this->symbols.push_back(std::string(realname));
+      realname = abi::__cxa_demangle(sym, NULL, NULL, &status);
+      if (status == 0) {
+        this->symbols.push_back(std::string(realname));
+      } else {
+        this->symbols.push_back(std::string(sym));
+      }
       free(realname);
     } else {
       unw_word_t ip;
